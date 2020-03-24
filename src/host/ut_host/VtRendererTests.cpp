@@ -257,22 +257,21 @@ void VtRendererTest::Xterm256TestInvalidate()
         VERIFY_IS_FALSE(engine->_firstPaint);
     });
 
-    const Viewport view = SetUpViewport();
+    Viewport view = SetUpViewport();
 
     Log::Comment(NoThrowString().Format(
         L"Make sure that invalidating all invalidates the whole viewport."));
     VERIFY_SUCCEEDED(engine->InvalidateAll());
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
     });
 
     Log::Comment(NoThrowString().Format(
         L"Make sure that invalidating anything only invalidates that portion"));
-    SMALL_RECT invalid = { 1, 1, 2, 2 };
+    SMALL_RECT invalid = { 1, 1, 1, 1 };
     VERIFY_SUCCEEDED(engine->Invalidate(&invalid));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.one());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, *(engine->_invalidMap.begin()));
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
     });
 
     Log::Comment(NoThrowString().Format(
@@ -285,9 +284,7 @@ void VtRendererTest::Xterm256TestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 1;
 
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(1u, runs.size());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, runs.front());
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
         qExpectedInput.push_back("\x1b[H"); // Go Home
         qExpectedInput.push_back("\x1b[L"); // insert a line
 
@@ -303,17 +300,7 @@ void VtRendererTest::Xterm256TestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
         // We would expect a CUP here, but the cursor is already at the home position
         qExpectedInput.push_back("\x1b[3L"); // insert 3 lines
         VERIFY_SUCCEEDED(engine->ScrollFrame());
@@ -327,9 +314,7 @@ void VtRendererTest::Xterm256TestInvalidate()
         invalid = view.ToExclusive();
         invalid.Top = invalid.Bottom - 1;
 
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(1u, runs.size());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, runs.front());
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         qExpectedInput.push_back("\x1b[32;1H"); // Bottom of buffer
         qExpectedInput.push_back("\n"); // Scroll down once
@@ -344,17 +329,7 @@ void VtRendererTest::Xterm256TestInvalidate()
         invalid = view.ToExclusive();
         invalid.Top = invalid.Bottom - 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         // We would expect a CUP here, but we're already at the bottom from the last call.
         qExpectedInput.push_back("\n\n\n"); // Scroll down three times
@@ -374,18 +349,7 @@ void VtRendererTest::Xterm256TestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
-
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
         qExpectedInput.push_back("\x1b[H"); // Go to home
         qExpectedInput.push_back("\x1b[3L"); // insert 3 lines
         VERIFY_SUCCEEDED(engine->ScrollFrame());
@@ -393,39 +357,21 @@ void VtRendererTest::Xterm256TestInvalidate()
 
     scrollDelta = { 0, 1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
-    Log::Comment(engine->_invalidMap.to_string().c_str());
+    Log::Comment(NoThrowString().Format(
+        VerifyOutputTraits<SMALL_RECT>::ToString(engine->_invalidRect.ToExclusive())));
 
     scrollDelta = { 0, -1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
-    Log::Comment(engine->_invalidMap.to_string().c_str());
+    Log::Comment(NoThrowString().Format(
+        VerifyOutputTraits<SMALL_RECT>::ToString(engine->_invalidRect.ToExclusive())));
 
     qExpectedInput.push_back("\x1b[2J");
     TestPaint(*engine, [&]() {
         Log::Comment(NoThrowString().Format(
             L"---- Scrolled one down and one up, nothing should change ----"
             L" But it still does for now MSFT:14169294"));
-
-        const auto runs = engine->_invalidMap.runs();
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // only the bottom line should be dirty.
-        // When we scrolled down, the bitmap looked like this:
-        // 1111
-        // 0000
-        // 0000
-        // 0000
-        // And then we scrolled up and the top line fell off and a bottom
-        // line was filled in like this:
-        // 0000
-        // 0000
-        // 0000
-        // 1111
-        const til::rectangle expected{ til::point{ view.Left(), view.BottomInclusive() }, til::size{ view.Width(), 1 } };
-        VERIFY_ARE_EQUAL(expected, invalidRect);
+        invalid = view.ToExclusive();
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         VERIFY_SUCCEEDED(engine->ScrollFrame());
     });
@@ -784,16 +730,15 @@ void VtRendererTest::XtermTestInvalidate()
         L"Make sure that invalidating all invalidates the whole viewport."));
     VERIFY_SUCCEEDED(engine->InvalidateAll());
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
     });
 
     Log::Comment(NoThrowString().Format(
         L"Make sure that invalidating anything only invalidates that portion"));
-    SMALL_RECT invalid = { 1, 1, 2, 2 };
+    SMALL_RECT invalid = { 1, 1, 1, 1 };
     VERIFY_SUCCEEDED(engine->Invalidate(&invalid));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.one());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, *(engine->_invalidMap.begin()));
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
     });
 
     Log::Comment(NoThrowString().Format(
@@ -806,9 +751,7 @@ void VtRendererTest::XtermTestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 1;
 
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(1u, runs.size());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, runs.front());
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         qExpectedInput.push_back("\x1b[H"); // Go Home
         qExpectedInput.push_back("\x1b[L"); // insert a line
@@ -823,17 +766,7 @@ void VtRendererTest::XtermTestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
         // We would expect a CUP here, but the cursor is already at the home position
         qExpectedInput.push_back("\x1b[3L"); // insert 3 lines
         VERIFY_SUCCEEDED(engine->ScrollFrame());
@@ -847,9 +780,7 @@ void VtRendererTest::XtermTestInvalidate()
         invalid = view.ToExclusive();
         invalid.Top = invalid.Bottom - 1;
 
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(1u, runs.size());
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, runs.front());
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         qExpectedInput.push_back("\x1b[32;1H"); // Bottom of buffer
         qExpectedInput.push_back("\n"); // Scroll down once
@@ -864,17 +795,7 @@ void VtRendererTest::XtermTestInvalidate()
         invalid = view.ToExclusive();
         invalid.Top = invalid.Bottom - 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
 
         // We would expect a CUP here, but we're already at the bottom from the last call.
         qExpectedInput.push_back("\n\n\n"); // Scroll down three times
@@ -894,18 +815,7 @@ void VtRendererTest::XtermTestInvalidate()
         invalid = view.ToExclusive();
         invalid.Bottom = 3;
 
-        // we should have 3 runs and build a rectangle out of them
-        const auto runs = engine->_invalidMap.runs();
-        VERIFY_ARE_EQUAL(3u, runs.size());
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // verify the rect matches the invalid one.
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, invalidRect);
-
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
         qExpectedInput.push_back("\x1b[H"); // Go to home
         qExpectedInput.push_back("\x1b[3L"); // insert 3 lines
         VERIFY_SUCCEEDED(engine->ScrollFrame());
@@ -913,39 +823,21 @@ void VtRendererTest::XtermTestInvalidate()
 
     scrollDelta = { 0, 1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
-    Log::Comment(engine->_invalidMap.to_string().c_str());
+    Log::Comment(NoThrowString().Format(
+        VerifyOutputTraits<SMALL_RECT>::ToString(engine->_invalidRect.ToExclusive())));
 
     scrollDelta = { 0, -1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
-    Log::Comment(engine->_invalidMap.to_string().c_str());
+    Log::Comment(NoThrowString().Format(
+        VerifyOutputTraits<SMALL_RECT>::ToString(engine->_invalidRect.ToExclusive())));
 
     qExpectedInput.push_back("\x1b[2J");
     TestPaint(*engine, [&]() {
         Log::Comment(NoThrowString().Format(
             L"---- Scrolled one down and one up, nothing should change ----"
             L" But it still does for now MSFT:14169294"));
-
-        const auto runs = engine->_invalidMap.runs();
-        auto invalidRect = runs.front();
-        for (size_t i = 1; i < runs.size(); ++i)
-        {
-            invalidRect |= runs[i];
-        }
-
-        // only the bottom line should be dirty.
-        // When we scrolled down, the bitmap looked like this:
-        // 1111
-        // 0000
-        // 0000
-        // 0000
-        // And then we scrolled up and the top line fell off and a bottom
-        // line was filled in like this:
-        // 0000
-        // 0000
-        // 0000
-        // 1111
-        const til::rectangle expected{ til::point{ view.Left(), view.BottomInclusive() }, til::size{ view.Width(), 1 } };
-        VERIFY_ARE_EQUAL(expected, invalidRect);
+        invalid = view.ToExclusive();
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
 
         VERIFY_SUCCEEDED(engine->ScrollFrame());
     });
@@ -1159,15 +1051,15 @@ void VtRendererTest::WinTelnetTestInvalidate()
         L"Make sure that invalidating all invalidates the whole viewport."));
     VERIFY_SUCCEEDED(engine->InvalidateAll());
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
     });
 
     Log::Comment(NoThrowString().Format(
         L"Make sure that invalidating anything only invalidates that portion"));
-    SMALL_RECT invalid = { 1, 1, 2, 2 };
+    SMALL_RECT invalid = { 1, 1, 1, 1 };
     VERIFY_SUCCEEDED(engine->Invalidate(&invalid));
     TestPaint(*engine, [&]() {
-        VERIFY_ARE_EQUAL(til::rectangle{ Viewport::FromExclusive(invalid).ToInclusive() }, *(engine->_invalidMap.begin()));
+        VERIFY_ARE_EQUAL(invalid, engine->_invalidRect.ToExclusive());
     });
 
     Log::Comment(NoThrowString().Format(
@@ -1175,7 +1067,7 @@ void VtRendererTest::WinTelnetTestInvalidate()
     COORD scrollDelta = { 0, 1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
         qExpectedInput.push_back(EMPTY_CALLBACK_SENTINEL); // sentinel
         VERIFY_SUCCEEDED(engine->ScrollFrame());
         WriteCallback(EMPTY_CALLBACK_SENTINEL, 1); // This will make sure nothing was written to the callback
@@ -1184,7 +1076,7 @@ void VtRendererTest::WinTelnetTestInvalidate()
     scrollDelta = { 0, -1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
         qExpectedInput.push_back(EMPTY_CALLBACK_SENTINEL);
         VERIFY_SUCCEEDED(engine->ScrollFrame());
         WriteCallback(EMPTY_CALLBACK_SENTINEL, 1); // This will make sure nothing was written to the callback
@@ -1193,7 +1085,7 @@ void VtRendererTest::WinTelnetTestInvalidate()
     scrollDelta = { 1, 0 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
         qExpectedInput.push_back(EMPTY_CALLBACK_SENTINEL);
         VERIFY_SUCCEEDED(engine->ScrollFrame());
         WriteCallback(EMPTY_CALLBACK_SENTINEL, 1); // This will make sure nothing was written to the callback
@@ -1202,7 +1094,7 @@ void VtRendererTest::WinTelnetTestInvalidate()
     scrollDelta = { -1, 0 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
         qExpectedInput.push_back(EMPTY_CALLBACK_SENTINEL);
         VERIFY_SUCCEEDED(engine->ScrollFrame());
         WriteCallback(EMPTY_CALLBACK_SENTINEL, 1); // This will make sure nothing was written to the callback
@@ -1211,7 +1103,7 @@ void VtRendererTest::WinTelnetTestInvalidate()
     scrollDelta = { 1, -1 };
     VERIFY_SUCCEEDED(engine->InvalidateScroll(&scrollDelta));
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(view, engine->_invalidRect);
         qExpectedInput.push_back(EMPTY_CALLBACK_SENTINEL);
         VERIFY_SUCCEEDED(engine->ScrollFrame());
         WriteCallback(EMPTY_CALLBACK_SENTINEL, 1); // This will make sure nothing was written to the callback
@@ -1459,7 +1351,7 @@ void VtRendererTest::TestResize()
     VERIFY_SUCCEEDED(engine->UpdateViewport(newView.ToInclusive()));
 
     TestPaint(*engine, [&]() {
-        VERIFY_IS_TRUE(engine->_invalidMap.all());
+        VERIFY_ARE_EQUAL(newView, engine->_invalidRect);
         VERIFY_IS_FALSE(engine->_firstPaint);
         VERIFY_IS_FALSE(engine->_suppressResizeRepaint);
     });

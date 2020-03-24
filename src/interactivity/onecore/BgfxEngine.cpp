@@ -232,7 +232,7 @@ BgfxEngine::BgfxEngine(PVOID SharedViewBase, LONG DisplayHeight, LONG DisplayWid
     return S_OK;
 }
 
-std::vector<til::rectangle> BgfxEngine::GetDirtyArea()
+std::vector<SMALL_RECT> BgfxEngine::GetDirtyArea()
 {
     SMALL_RECT r;
     r.Bottom = _displayHeight > 0 ? (SHORT)(_displayHeight - 1) : 0;

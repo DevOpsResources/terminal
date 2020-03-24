@@ -355,7 +355,7 @@ bool WddmConEngine::IsInitialized()
     return S_OK;
 }
 
-std::vector<til::rectangle> WddmConEngine::GetDirtyArea()
+std::vector<SMALL_RECT> WddmConEngine::GetDirtyArea()
 {
     SMALL_RECT r;
     r.Bottom = _displayHeight > 0 ? (SHORT)(_displayHeight - 1) : 0;
